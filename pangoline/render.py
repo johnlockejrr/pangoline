@@ -42,7 +42,8 @@ def render_text(text: str,
                 font: str = 'Serif Normal 10',
                 language: Optional[str] = None,
                 base_dir: Optional[Literal['R', 'L']] = None,
-                enable_markup: bool = True):
+                enable_markup: bool = True,
+                line_spacing: Optional[float] = None):
     """
     Renders (horizontal) text into a sequence of PDF files and creates parallel
     ALTO files for each page.
@@ -59,9 +60,12 @@ def render_text(text: str,
                           files at `Path.with_suffix(f'.{idx}.xml')`.
         paper_size: `(width, height)` of the PDF output in mm.
         margins: `(top, bottom, left, right)` margins in mm.
+        font: Font specification to render the text in.
         language: Set language to enable language-specific rendering. If none
                   is set, the system default will be used.
         base_dir: Sets the base direction of the BiDi algorithm.
+        enable_markup: Enable Pango markup processing.
+        line_spacing: Additional space between lines in points. None for default.
     """
     output_base_path = Path(output_base_path)
 
@@ -70,10 +74,10 @@ def render_text(text: str,
 
     _mm_point = 72 / 25.4
     width, height = paper_size[0] * _mm_point, paper_size[1] * _mm_point
-    top_margin = 25 * _mm_point
-    bottom_margin = 30 * _mm_point
-    left_margin = 20 * _mm_point
-    right_margin = 20 * _mm_point
+    top_margin = margins[0] * _mm_point
+    bottom_margin = margins[1] * _mm_point
+    left_margin = margins[2] * _mm_point
+    right_margin = margins[3] * _mm_point
 
     font_desc = Pango.font_description_from_string(font)
     font_desc.set_features('liga=1, clig=1, dlig=1, hlig=1')
@@ -98,6 +102,11 @@ def render_text(text: str,
     layout.set_justify(True)
     layout.set_width(pango_text_width)
     layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+
+    # Set line spacing if specified
+    if line_spacing is not None:
+        layout.set_spacing(int(line_spacing * Pango.SCALE))
+
     p_context = layout.get_context()
     p_context.set_language(pango_lang)
     if pango_dir:
