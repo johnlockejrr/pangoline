@@ -46,7 +46,7 @@ def cli(workers):
 
 
 def _render_doc(doc, output_dir, paper_size, margins, font, language,
-                base_dir, enable_markup):
+                base_dir, enable_markup, line_spacing=None):
     from pangoline.render import render_text
 
     with open(doc, 'r') as fp:
@@ -57,7 +57,8 @@ def _render_doc(doc, output_dir, paper_size, margins, font, language,
                     font=font,
                     language=language,
                     base_dir=base_dir,
-                    enable_markup=enable_markup)
+                    enable_markup=enable_markup,
+                    line_spacing=line_spacing)
 
 
 @cli.command('render')
@@ -88,6 +89,10 @@ def _render_doc(doc, output_dir, paper_size, margins, font, language,
 @click.option('--markup/--no-markup',
               default=True,
               help='Switch for Pango markup parsing in input texts.')
+@click.option('--line-spacing',
+              type=float,
+              default=None,
+              help='Additional space between lines in points. Defaults to normal spacing.')
 @click.argument('docs',
                 type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
                 nargs=-1)
@@ -99,6 +104,7 @@ def render(ctx,
            base_dir: Optional[Literal['L', 'R']],
            output_dir: 'PathLike',
            markup: bool,
+           line_spacing: Optional[float],
            docs):
     """
     Renders text files into PDF documents and creates parallel ALTO facsimiles.
@@ -114,7 +120,8 @@ def render(ctx,
                                              font=font,
                                              language=language,
                                              base_dir=base_dir,
-                                             enable_markup=markup), docs):
+                                             enable_markup=markup,
+                                             line_spacing=line_spacing), docs):
             progress.update(render_task, total=len(docs), advance=1)
 
 
@@ -124,6 +131,18 @@ def _rasterize_doc(inp, output_base_path, dpi):
                        output_base_path=output_base_path,
                        writing_surface=inp[1],
                        dpi=dpi)
+
+
+def _collect_images(paths):
+    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'}
+    image_files = []
+    for path in paths:
+        path = Path(path)
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+            image_files.append(path)
+        elif path.is_dir():
+            image_files.extend([f for f in path.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS])
+    return image_files
 
 
 @cli.command('rasterize')
@@ -140,11 +159,10 @@ def _rasterize_doc(inp, output_base_path, dpi):
               default=Path('.'),
               help='Base output path to place image and rewritten XML files into.')
 @click.option('-w', '--writing-surface',
-              type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+              type=click.Path(exists=True, readable=True, path_type=Path),
               default=None,
               multiple=True,
-              help='Image file to overlay the rasterized text on. If multiple '
-              ' are given a random one will be selected for each input file.')
+              help='Image file(s) or directory(ies) to overlay on rasterized text. A random one will be selected per input file.')
 @click.argument('docs',
                 type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
                 nargs=-1)
@@ -162,7 +180,12 @@ def rasterize(ctx,
 
     if writing_surface:
         from random import choices
-        writing_surface = choices(writing_surface, k=len(docs))
+        all_surfaces = _collect_images(writing_surface)
+        if not all_surfaces:
+            raise click.BadParameter("No valid image files found in the provided paths.")
+        writing_surface = choices(all_surfaces, k=len(docs))
+    else:
+        writing_surface = [None] * len(docs)
 
     docs = list(zip_longest(docs, writing_surface))
 
