@@ -27,12 +27,76 @@ from gi.repository import Pango, PangoCairo
 
 from pathlib import Path
 from itertools import count
-from typing import Union, Tuple, Literal, Optional, TYPE_CHECKING
+from typing import Union, Tuple, Literal, Optional, TYPE_CHECKING, List, Dict, Any
 
 from jinja2 import Environment, PackageLoader
 
 if TYPE_CHECKING:
     from os import PathLike
+
+
+def get_cluster_polygons(line_it: Pango.LayoutIter, line: Pango.LayoutLine, baseline: int, 
+                        print_space_offset: int, width: float, right_margin: float, 
+                        left_margin: float, top_margin: float, _mm_point: float) -> Dict[str, Any]:
+    """
+    Get polygon points for a line by aggregating cluster extents.
+    Returns dictionary with polygon points and other line metrics.
+    """
+    line_dir = line.get_resolved_direction()
+    cluster_points = []
+    min_x = float('inf')
+    max_x = float('-inf')
+    min_y = float('inf')
+    max_y = float('-inf')
+    
+    # Start cluster iteration
+    cluster_it = line_it.copy()
+    while True:
+        ink_rect, _ = cluster_it.get_cluster_extents()
+        Pango.extents_to_pixels(ink_rect)
+        
+        if ink_rect.width > 0 and ink_rect.height > 0:  # Skip empty clusters
+            x, y = ink_rect.x, ink_rect.y
+            w, h = ink_rect.width, ink_rect.height
+            
+            # Adjust coordinates based on text direction
+            if line_dir == Pango.Direction.RTL:
+                x = (width - right_margin) - x - w
+            else:
+                x = x + left_margin
+                
+            # Transform to page coordinates
+            y = Pango.units_to_double(baseline - print_space_offset) + top_margin + y
+            
+            # Update bounds
+            min_x = min(min_x, x)
+            max_x = max(max_x, x + w)
+            min_y = min(min_y, y)
+            max_y = max(max_y, y + h)
+            
+            # Add points for this cluster's rectangle
+            cluster_points.extend([
+                (x, y),           # top-left
+                (x + w, y),       # top-right
+                (x + w, y + h),   # bottom-right
+                (x, y + h)        # bottom-left
+            ])
+        
+        if not cluster_it.next_cluster():
+            break
+    
+    # Convert to mm
+    bl = Pango.units_to_double(baseline - print_space_offset) + top_margin
+    
+    return {
+        'points': [(int(round(x / _mm_point)), int(round(y / _mm_point))) 
+                  for x, y in cluster_points],
+        'baseline': int(round(bl / _mm_point)),
+        'top': int(math.floor(min_y / _mm_point)),
+        'bottom': int(math.ceil(max_y / _mm_point)),
+        'left': int(math.floor(min_x / _mm_point)),
+        'right': int(math.ceil(max_x / _mm_point))
+    }
 
 
 def render_text(text: str,
@@ -148,30 +212,34 @@ def render_text(text: str,
             s_idx, e_idx = line.start_index, line.length
             line_text = utf8_text[s_idx:s_idx+e_idx].decode('utf-8')
             if line_text := line_text.strip():
-                # line direction determines reference point of extents
-                line_dir = line.get_resolved_direction()
-                ink_extents, log_extents = line.get_extents()
-                Pango.extents_to_pixels(ink_extents)
-                bl = Pango.units_to_double(baseline - print_space_offset) + top_margin
-                top = bl + ink_extents.y
-                bottom = top + ink_extents.height
-                if line_dir == Pango.Direction.RTL:
-                    right = (width - right_margin) - ink_extents.x
-                    left = right - ink_extents.width
+                # Get polygon points and metrics using clusters
+                line_data = get_cluster_polygons(
+                    line_it, line, baseline, print_space_offset,
+                    width, right_margin, left_margin, top_margin, _mm_point
+                )
+                
+                # Add line data to splits
+                line_splits.append({
+                    'id': str(uuid.uuid4()),
+                    'text': line_text,
+                    'polygon_points': line_data['points'],
+                    'baseline': line_data['baseline'],
+                    'top': line_data['top'],
+                    'bottom': line_data['bottom'],
+                    'left': line_data['left'],
+                    'right': line_data['right']
+                })
+                
+                # Render the line
+                _, log_extents = line.get_extents()
+                if line.get_resolved_direction() == Pango.Direction.RTL:
                     lleft = (width - right_margin) - Pango.units_to_double(log_extents.x + log_extents.width)
-                elif line_dir == Pango.Direction.LTR:
-                    left = ink_extents.x + left_margin
+                else:
                     lleft = Pango.units_to_double(log_extents.x) + left_margin
-                    right = left + ink_extents.width
-                line_splits.append({'id': str(uuid.uuid4()),
-                                    'text': line_text,
-                                    'baseline': int(round(bl / _mm_point)),
-                                    'top': int(math.floor(top / _mm_point)),
-                                    'bottom': int(math.ceil(bottom / _mm_point)),
-                                    'left': int(math.floor(left / _mm_point)),
-                                    'right': int(math.ceil(right / _mm_point))})
-                context.move_to(lleft - left_margin, bl - top_margin)
+                
+                context.move_to(lleft - left_margin, Pango.units_to_double(baseline - print_space_offset))
                 PangoCairo.show_layout_line(context, line)
+                
             line_it.next_line()
 
         # write ALTO XML file
