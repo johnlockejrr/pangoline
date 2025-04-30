@@ -15,7 +15,7 @@
                 {% for line in lines -%}
                 <TextLine ID="{{ line.id }}" HPOS="{{ line.left }}" VPOS="{{ line.top }}" WIDTH="{{ line.right - line.left }}" HEIGHT="{{ line.bottom - line.top }}" BASELINE="{{ line.left }},{{ line.baseline }} {{ line.right }},{{ line.baseline }}">
                   <Shape>
-                    <Polygon POINTS="{% for x, y in line.polygon_points %}{{ x }},{{ y }} {% endfor %}"/>
+                    <Polygon POINTS="{% for x, y in line.polygon_points %}{{ x }},{{ y }} {% endfor %}{{ line.polygon_points[0][0] }},{{ line.polygon_points[0][1] }}"/>
                   </Shape>
                   <String CONTENT="{{ line.text|e }}"/>
                 </TextLine>
