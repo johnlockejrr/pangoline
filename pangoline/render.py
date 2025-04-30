@@ -43,7 +43,7 @@ def get_cluster_polygons(line_it: Pango.LayoutIter, line: Pango.LayoutLine, base
     Returns dictionary with polygon points and other line metrics.
     """
     line_dir = line.get_resolved_direction()
-    cluster_points = []
+    cluster_rects = []
     min_x = float('inf')
     max_x = float('-inf')
     min_y = float('inf')
@@ -68,29 +68,49 @@ def get_cluster_polygons(line_it: Pango.LayoutIter, line: Pango.LayoutLine, base
             # Transform to page coordinates
             y = Pango.units_to_double(baseline - print_space_offset) + top_margin + y
             
+            # Add a small dilation to ensure proper coverage
+            dilation = 0.5 * _mm_point  # 0.5mm dilation
+            x -= dilation
+            y -= dilation
+            w += 2 * dilation
+            h += 2 * dilation
+            
             # Update bounds
             min_x = min(min_x, x)
             max_x = max(max_x, x + w)
             min_y = min(min_y, y)
             max_y = max(max_y, y + h)
             
-            # Add points for this cluster's rectangle
-            cluster_points.extend([
-                (x, y),           # top-left
-                (x + w, y),       # top-right
-                (x + w, y + h),   # bottom-right
-                (x, y + h)        # bottom-left
-            ])
+            cluster_rects.append((x, y, w, h))
         
         if not cluster_it.next_cluster():
             break
     
-    # Convert to mm
+    # Create a single polygon by connecting the rectangles
+    polygon_points = []
+    
+    # Sort rectangles by x-coordinate
+    cluster_rects.sort(key=lambda r: r[0])
+    
+    # Add top points from left to right
+    for x, y, w, h in cluster_rects:
+        polygon_points.append((x, y))
+        polygon_points.append((x + w, y))
+    
+    # Add bottom points from right to left
+    for x, y, w, h in reversed(cluster_rects):
+        polygon_points.append((x + w, y + h))
+        polygon_points.append((x, y + h))
+    
+    # Convert to mm and round
+    polygon_points = [(int(round(x / _mm_point)), int(round(y / _mm_point))) 
+                     for x, y in polygon_points]
+    
+    # Convert baseline to mm
     bl = Pango.units_to_double(baseline - print_space_offset) + top_margin
     
     return {
-        'points': [(int(round(x / _mm_point)), int(round(y / _mm_point))) 
-                  for x, y in cluster_points],
+        'points': polygon_points,
         'baseline': int(round(bl / _mm_point)),
         'top': int(math.floor(min_y / _mm_point)),
         'bottom': int(math.ceil(max_y / _mm_point)),
